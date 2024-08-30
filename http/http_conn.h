@@ -16,6 +16,12 @@
 #include <sys/stat.h>  
 // 包含map容器的头文件
 #include <map>
+#include <sys/mman.h>
+#include <stdarg.h>
+#include <sys/uio.h> 
+
+#include "../lock/locker.h"
+
 
 // 使用标准命名空间
 using namespace std;
@@ -56,7 +62,7 @@ enum METHOD {
         NO_REQUEST,      // 尚未收到请求
         GET_REQUEST,     // 成功接收GET请求
         BAD_REQUEST,     // 请求语法错误，无法解析
-        NO_REQUEST,      // 重复定义，可能是错误？
+        NO_RESOURCE,      // 重复定义，可能是错误？
         FORBIDDEN_REQUEST, // 请求资源禁止访问
         FILE_REQUEST,    // 请求的资源为文件
         INTERNAL_ERROR,  // 服务器内部错误
