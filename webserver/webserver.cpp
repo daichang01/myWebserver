@@ -119,3 +119,54 @@ void WebServer::eventLoop() {
         }
     }
 }
+
+void WebServer::eventListen() {
+    m_listenfd = socket(PF_INET, SOCK_STREAM, 0);
+    assert(m_listenfd >= 0);
+
+    //优雅的关闭
+    if (0 == m_OPT_LINGER) {
+        struct linger tmp =  {0, 1};
+        setsockopt(m_listenfd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
+    }
+    else if (1 == m_OPT_LINGER) {
+        struct  linger tmp = {1, 1};
+        setsockopt(m_listenfd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
+    }
+    int ret = 0;
+    struct sockaddr_in address;
+    bzero(&address, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    address.sin_port = htons(m_port);
+
+    int flag = 1;
+    setsockopt(m_listenfd, SOL_SOCKET,SO_REUSEADDR, &flag,sizeof(flag));
+    ret = bind(m_listenfd, (struct sockaddr*)&address, sizeof(address));
+    assert(ret >= 0);
+    ret = listen(m_listenfd, 5);
+    assert(ret >= 0);
+
+    utils.init(TIMESLOT);
+    //epoll 创建内核事件表
+    epoll_event events[MAX_EVENT_NUMBER];
+    m_epollfd = epoll_create(5);
+    assert(m_epollfd != -1);
+
+    utils.addfd(m_epollfd, m_listenfd, false, m_LISTENTrigmode);
+    http_conn::m_epollfd = m_epollfd;
+
+    ret= socketpair(PF_UNIX, SOCK_STREAM, 0, m_pipefd);
+    assert(ret != -1);
+    utils.setnonblocking(m_pipefd[1]);
+    utils.addfd(m_epollfd, m_pipefd[0], false, 0);
+
+    utils.addsig(SIGPIPE, SIG_IGN);
+    utils.addsig(SIGALRM, utils.sig_handler, false);
+    utils.addsig(SIGTERM, utils.sig_handler, false);
+
+    alarm(TIMESLOT);
+    Utils::u_pipefd = m_pipefd;
+    Utils::u_epollfd = m_epollfd;
+    
+}
