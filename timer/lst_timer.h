@@ -6,6 +6,8 @@
 #include <signal.h>
 #include <assert.h>
 
+//连接资源结构体成员需要用到定时器类
+class util_timer;
 // 用于保存客户端相关数据的结构体
 struct client_data
 {
@@ -26,7 +28,6 @@ public:
     util_timer* prev;                // 指向前一个定时器
     util_timer* next;                // 指向下一个定时器
 };
-
 // 定时器链表类，定时器按超时时间升序排列
 class sort_timer_lst {
 public:
@@ -67,6 +68,7 @@ public:
 };
 
 // 定时器的回调函数
-void cb_fun(client_data* user_data);
+void cb_func(client_data *user_data);
+
 
 #endif

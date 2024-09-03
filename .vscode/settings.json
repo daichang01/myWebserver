@@ -3,6 +3,11 @@
         "*.tcc": "cpp",
         "memory_resource": "cpp",
         "memory": "cpp",
-        "type_traits": "cpp"
+        "type_traits": "cpp",
+        "unordered_map": "cpp",
+        "fstream": "cpp",
+        "istream": "cpp",
+        "ostream": "cpp",
+        "sstream": "cpp"
     }
 }

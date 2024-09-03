@@ -120,11 +120,13 @@ void WebServer::eventLoop() {
     }
 }
 
+// 初始化Web服务器的事件监听
 void WebServer::eventListen() {
+    // 创建监听套接字
     m_listenfd = socket(PF_INET, SOCK_STREAM, 0);
-    assert(m_listenfd >= 0);
+    assert(m_listenfd >= 0); // 确保套接字创建成功
 
-    //优雅的关闭
+    // 根据m_OPT_LINGER的值设置套接字的linger选项
     if (0 == m_OPT_LINGER) {
         struct linger tmp =  {0, 1};
         setsockopt(m_listenfd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
@@ -133,40 +135,53 @@ void WebServer::eventListen() {
         struct  linger tmp = {1, 1};
         setsockopt(m_listenfd, SOL_SOCKET, SO_LINGER, &tmp, sizeof(tmp));
     }
-    int ret = 0;
+
+    // 准备绑定的地址结构
     struct sockaddr_in address;
     bzero(&address, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_ANY);
     address.sin_port = htons(m_port);
 
+    // 设置套接字选项，允许地址复用
     int flag = 1;
     setsockopt(m_listenfd, SOL_SOCKET,SO_REUSEADDR, &flag,sizeof(flag));
-    ret = bind(m_listenfd, (struct sockaddr*)&address, sizeof(address));
-    assert(ret >= 0);
-    ret = listen(m_listenfd, 5);
-    assert(ret >= 0);
 
+    // 将套接字绑定到地址
+    int ret = bind(m_listenfd, (struct sockaddr*)&address, sizeof(address));
+    assert(ret >= 0); // 确保绑定成功
+
+    // 开始监听连接
+    ret = listen(m_listenfd, 5);
+    assert(ret >= 0); // 确保监听成功
+
+    // 初始化utils工具类
     utils.init(TIMESLOT);
-    //epoll 创建内核事件表
+
+    // 创建epoll事件表
     epoll_event events[MAX_EVENT_NUMBER];
     m_epollfd = epoll_create(5);
-    assert(m_epollfd != -1);
+    assert(m_epollfd != -1); // 确保epoll创建成功 f
 
+    // 将监听套接字添加到epoll事件表
     utils.addfd(m_epollfd, m_listenfd, false, m_LISTENTrigmode);
     http_conn::m_epollfd = m_epollfd;
 
+    // 创建管道用于epoll的边缘触发
     ret= socketpair(PF_UNIX, SOCK_STREAM, 0, m_pipefd);
-    assert(ret != -1);
+    assert(ret != -1); // 确保管道创建成功
     utils.setnonblocking(m_pipefd[1]);
     utils.addfd(m_epollfd, m_pipefd[0], false, 0);
 
+    // 添加信号处理
     utils.addsig(SIGPIPE, SIG_IGN);
     utils.addsig(SIGALRM, utils.sig_handler, false);
     utils.addsig(SIGTERM, utils.sig_handler, false);
 
+    // 设置定时器
     alarm(TIMESLOT);
+
+    // 为工具类Utils设置管道和epollfd
     Utils::u_pipefd = m_pipefd;
     Utils::u_epollfd = m_epollfd;
-    
 }
