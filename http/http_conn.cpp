@@ -60,6 +60,96 @@ void http_conn::initmysql_result(connection_pool* connPool) {
     }
 }
 
+//对文件描述符设置非阻塞
+/**
+ * 设置文件描述符为非阻塞模式
+ * 
+ * 此函数的目的是将给定文件描述符（fd）的模式从阻塞改为非阻塞
+ * 在非阻塞模式下，I/O 操作不会因为等待数据而阻塞当前线程
+ * 
+ * @param fd 要设置为非阻塞模式的文件描述符
+ * @return 返回更改前的文件描述符的阻塞选项
+ */
+int setnonblocking(int fd) {
+    // 获取文件描述符的当前状态
+    int old_option = fcntl(fd, F_GETFL);
+    // 新选项是在原有选项上加上非阻塞标志
+    int new_option = old_option | O_NONBLOCK;
+    // 设置文件描述符为非阻塞模式
+    fcntl(fd, F_SETFL, new_option);
+    // 返回更改前的阻塞选项
+    return old_option;
+}
+
+// 将内核事件注册为读事件，使用ET模式，并选择是否开启EPOLLONESHOT
+void addfd(int epollfd, int fd, bool one_shot, int TRIGMode) {
+    epoll_event event;
+    event.data.fd = fd; // 设置事件对应的文件描述符
+
+    // 根据触发模式设置事件为ET模式还是LT模式
+    if (1 == TRIGMode) {
+        event.events = EPOLLIN | EPOLLET | EPOLLRDHUP; // ET模式加上边缘触发标志
+
+    } else {
+        event.events = EPOLLIN | EPOLLRDHUP; // LT模式不加边缘触发标志
+    }
+    
+    // 如果one_shot为真，则加上EPOLLONESHOT标志
+    if (one_shot) {
+        event.events |= EPOLLONESHOT;
+
+    }
+    // 将事件添加到epoll文件描述符中
+    epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);
+    // 设置文件描述符为非阻塞模式
+    setnonblocking(fd);
+}
+
+
+/**
+ * 从epoll句柄中移除文件描述符fd，并关闭该fd。
+ * 
+ * @param epollfd epoll创建的文件描述符。
+ * @param fd 需要移除的文件描述符。
+ * 
+ * 该函数首先使用epoll_ctl函数将指定的文件描述符从epoll监控表中移除，
+ * 然后关闭该文件描述符。这一操作通常用于不再需要监控的文件描述符，
+ * 以减少系统资源的占用并更新epoll监控列表。
+ */
+void removefd(int epollfd, int fd) {
+    epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, 0);
+    close(fd);
+}
+
+//将事件重置为EPOLLONESHOT
+/**
+ * 修改文件描述符在epoll中的事件类型
+ * 
+ * @param epollfd epoll文件描述符
+ * @param fd 需要修改的文件描述符
+ * @param ev 新的事件类型
+ * @param TRIGMode 触发模式，1为边缘触发模式，否则为水平触发模式
+ * 
+ * 此函数通过epoll_ctl函数修改文件描述符fd在epoll中的事件类型根据TRIGMode的不同，
+ * 设置不同的事件类型如果TRIGMode为1，将事件类型设置为边缘触发模式（EPOLLET），
+ * 否则使用默认的水平触发模式在两种模式下，都会设置事件为一次性（EPOLLONESHOT）和关闭远程挂起（EPOLLRDHUP）
+ */
+
+
+void modfd(int epollfd, int fd, int ev, int TRIGMode) {
+    epoll_event event;
+    event.data.fd = fd;
+
+    if (1 == TRIGMode) {
+        event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
+    }
+    else {
+        event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
+    }
+    //修改fd上的注册事件
+    epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
+}
+
 
 // 初始化HTTP连接对象
 void http_conn::init() {
@@ -111,6 +201,34 @@ void http_conn::init() {
     memset(m_real_file, '\0', FILENAME_LEN);
 }
 
+//初始化连接,外部调用初始化套接字地址// 初始化HTTP连接的相关参数和配置
+// 外部调用此函数来初始化套接字地址和其他相关设置
+void http_conn::init(int sockfd, const sockaddr_in &addr, char *root, int TRIGMode,
+                     int close_log, string user, string passwd, string sqlname)
+{
+    // 设置文件描述符和客户端地址
+    m_sockfd = sockfd;
+    m_address = addr;
+
+    // 注册文件描述符到epoll实例，开启ET模式和边缘触发模式
+    addfd(m_epollfd, sockfd, true, m_TRIGMode);
+    // 增加当前用户计数
+    m_user_count++;
+
+    // 设置网站根目录路径
+    doc_root = root;
+    // 设置触发模式和日志关闭选项
+    m_TRIGMode = TRIGMode;
+    m_close_log = close_log;
+
+    // 复制数据库连接参数
+    strcpy(sql_user, user.c_str());
+    strcpy(sql_passwd, passwd.c_str());
+    strcpy(sql_name, sqlname.c_str());
+
+    // 调用重置方法，初始化其他成员变量
+    init();
+}
 
 //循环读取客户数据，直到无数据可读或对方关闭连接
 //非阻塞ET工作模式下，需要一次性将数据读完
@@ -693,26 +811,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text) {
     return NO_REQUEST;
 }
 
-//对文件描述符设置非阻塞
-/**
- * 设置文件描述符为非阻塞模式
- * 
- * 此函数的目的是将给定文件描述符（fd）的模式从阻塞改为非阻塞
- * 在非阻塞模式下，I/O 操作不会因为等待数据而阻塞当前线程
- * 
- * @param fd 要设置为非阻塞模式的文件描述符
- * @return 返回更改前的文件描述符的阻塞选项
- */
-int setnonblocking(int fd) {
-    // 获取文件描述符的当前状态
-    int old_option = fcntl(fd, F_GETFL);
-    // 新选项是在原有选项上加上非阻塞标志
-    int new_option = old_option | O_NONBLOCK;
-    // 设置文件描述符为非阻塞模式
-    fcntl(fd, F_SETFL, new_option);
-    // 返回更改前的阻塞选项
-    return old_option;
-}
+
 
 /**
  * 解析HTTP请求的头部信息
@@ -794,74 +893,6 @@ http_conn::HTTP_CODE http_conn::parse_content(char* text) {
     return NO_REQUEST;
 }
 
-// 将内核事件注册为读事件，使用ET模式，并选择是否开启EPOLLONESHOT
-void addfd(int epollfd, int fd, bool one_shot, int TRIGMode) {
-    epoll_event event;
-    event.data.fd = fd; // 设置事件对应的文件描述符
-
-    // 根据触发模式设置事件为ET模式还是LT模式
-    if (1 == TRIGMode) {
-        event.events = EPOLLIN | EPOLLET | EPOLLRDHUP; // ET模式加上边缘触发标志
-
-    } else {
-        event.events = EPOLLIN | EPOLLRDHUP; // LT模式不加边缘触发标志
-    }
-    
-    // 如果one_shot为真，则加上EPOLLONESHOT标志
-    if (one_shot) {
-        event.events |= EPOLLONESHOT;
-
-    }
-    // 将事件添加到epoll文件描述符中
-    epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);
-    // 设置文件描述符为非阻塞模式
-    setnonblocking(fd);
-}
-
-
-/**
- * 从epoll句柄中移除文件描述符fd，并关闭该fd。
- * 
- * @param epollfd epoll创建的文件描述符。
- * @param fd 需要移除的文件描述符。
- * 
- * 该函数首先使用epoll_ctl函数将指定的文件描述符从epoll监控表中移除，
- * 然后关闭该文件描述符。这一操作通常用于不再需要监控的文件描述符，
- * 以减少系统资源的占用并更新epoll监控列表。
- */
-void removefd(int epollfd, int fd) {
-    epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, 0);
-    close(fd);
-}
-
-//将事件重置为EPOLLONESHOT
-/**
- * 修改文件描述符在epoll中的事件类型
- * 
- * @param epollfd epoll文件描述符
- * @param fd 需要修改的文件描述符
- * @param ev 新的事件类型
- * @param TRIGMode 触发模式，1为边缘触发模式，否则为水平触发模式
- * 
- * 此函数通过epoll_ctl函数修改文件描述符fd在epoll中的事件类型根据TRIGMode的不同，
- * 设置不同的事件类型如果TRIGMode为1，将事件类型设置为边缘触发模式（EPOLLET），
- * 否则使用默认的水平触发模式在两种模式下，都会设置事件为一次性（EPOLLONESHOT）和关闭远程挂起（EPOLLRDHUP）
- */
-
-
-void modfd(int epollfd, int fd, int ev, int TRIGMode) {
-    epoll_event event;
-    event.data.fd = fd;
-
-    if (1 == TRIGMode) {
-        event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
-    }
-    else {
-        event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
-    }
-    //修改fd上的注册事件
-    epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
-}
 
 int http_conn::m_user_count = 0;
 int http_conn::m_epollfd = -1;
@@ -891,3 +922,23 @@ void http_conn::process() {
     modfd(m_epollfd, m_sockfd, EPOLLOUT, m_TRIGMode);
 }
 
+/**
+ * 关闭TCP连接的函数
+ * 
+ * 该函数用于关闭当前的HTTP连接。它可以选择性地关闭实际的TCP连接，这取决于传入的参数real_close。
+ * 
+ * @param real_close 指示是否真正关闭连接。如果为true且连接已经建立（即m_sockfd不为-1），则执行关闭操作。
+ */
+void http_conn::close_conn(bool real_close) {
+    // 检查是否需要真正关闭连接，且连接已经建立
+    if (real_close && (m_sockfd != -1)) {
+        // 输出关闭的连接ID
+        printf("close %d\n", m_sockfd);
+        // 从epoll中移除该连接的文件描述符
+        removefd(m_epollfd, m_sockfd);
+        // 将m_sockfd重置为未连接状态
+        m_sockfd = -1;
+        // 连接数量减一
+        m_user_count--;
+    }
+}

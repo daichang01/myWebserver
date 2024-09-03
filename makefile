@@ -14,11 +14,11 @@ else
 endif
 
 # 目标 'server' 依赖这些源文件。
-server: main.cpp ../timer/lst_timer.cpp ../http/http_conn.cpp ../log/log.cpp ../CGImysql/sql_connection_pool.cpp ../webserver/webserver.cpp ../config/config.cpp
-	# 编译 myserver 可执行文件，链接 pthread 和 mysqlclient 库。
-	$(CXX) -o myserver $^ $(CXXFLAGS) -lpthread -lmysqlclient
+server: main.cpp ./timer/lst_timer.cpp ./http/http_conn.cpp ./log/log.cpp ./CGImysql/sql_connection_pool.cpp webserver.cpp ./config/config.cpp
+	# 编译 server 可执行文件，链接 pthread 和 mysqlclient 库。
+	$(CXX) -o server $^ $(CXXFLAGS) -lpthread -lmysqlclient
 
 # 目标 'clean' 用于清理编译出的输出。
 clean:
 	# 删除 server 可执行文件。
-	rm -r myserver
+	rm -r server

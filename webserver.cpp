@@ -268,3 +268,251 @@ void WebServer::trig_mode() {
         m_CONNTrigmode = 1;
     }
 }
+
+bool WebServer::dealclientdata() {
+    // 定义一个用于存储客户端地址的结构体
+    struct sockaddr_in client_address;
+    // 定义客户端地址长度变量，并初始化为client_address结构体的大小
+    socklen_t client_addrlength = sizeof(client_address);
+
+    // 判断监听触发模式是否为水平触发（LT模式）
+    if (0 == m_LISTENTrigmode) {
+        // 调用accept函数接收客户端连接，返回新连接的文件描述符
+        int connfd = accept(m_listenfd, (struct sockaddr* )&client_address, &client_addrlength);
+        
+        // 如果连接失败，connfd小于0，记录错误日志并返回false
+        if (connfd < 0) {
+            LOG_ERROR("%s:errno is : %d", "accept error", errno);
+            return false;
+        }
+
+        // 如果当前用户数量超过最大文件描述符数量，拒绝连接并返回false
+        if (http_conn::m_user_count >= MAX_FD) {
+            utils.show_error(connfd, "internal server busy");
+            LOG_ERROR("%s", "Internal server busy");
+            return false;
+        }
+
+        // 成功接收连接后，启动定时器，设置连接超时时间
+        timer(connfd, client_address);
+    }
+    // 如果是边缘触发（ET模式）
+    else {
+        while (1) {
+            // 循环接收客户端连接
+            int connfd = accept(m_listenfd, (struct sockaddr *)&client_address, &client_addrlength);
+
+            // 如果连接失败，记录错误日志并跳出循环
+            if (connfd < 0) {
+                LOG_ERROR("%s:errno is:%d", "accept error", errno);
+                break;
+            }
+
+            // 如果当前用户数量超过最大文件描述符数量，拒绝连接并跳出循环
+            if (http_conn::m_user_count >= MAX_FD) {
+                utils.show_error(connfd, "Internal server busy");
+                LOG_ERROR("%s", "Internal server busy");
+                break;
+            }
+
+            // 成功接收连接后，启动定时器，设置连接超时时间
+            timer(connfd, client_address);
+        }
+        // 返回false表示没有成功处理客户端数据
+        return false;
+    }
+}
+
+/**
+ * 处理定时器相关操作
+ * 
+ * 本函数主要负责处理与特定socket描述符相关的定时器操作，包括执行定时器回调函数和删除定时器
+ * 
+ * @param timer 与某个客户端连接相关的定时器对象，用于超时处理
+ * @param sockfd 客户端的socket描述符，用于标识客户端连接
+ */
+void WebServer::deal_timer(util_timer *timer, int sockfd) {
+    // 执行定时器的回调函数，进行相应的处理操作
+    timer->cb_func(&users_timer[sockfd]);
+    
+    // 如果定时器对象非空，则从定时器列表中删除该对象
+    if (timer) {
+        utils.m_timer_lst.del_timer(timer);
+    }
+    
+    // 记录日志，说明已经关闭了相应的socket描述符
+    LOG_INFO("close fd %d", users_timer[sockfd].sockfd);
+}
+
+bool WebServer::dealwithsignal(bool &timeout, bool &stop_server) {
+    int ret = 0;
+    int sig;
+    char signals[1024];
+    ret = recv(m_pipefd[0], signals, sizeof(signals), 0);
+    if (ret == -1) {
+        return false;
+    }
+    else if (ret == 0) {
+        return false;
+    }
+    else {
+        for (int i = 0; i < ret ;i ++)  {
+            switch (signals[i])
+            {
+            case SIGALRM: {
+                timeout = true;
+                break;
+            }
+            case SIGTERM: {
+                stop_server = true;
+                break;
+            }
+            }
+        }
+    }
+}
+
+/**
+ * 调整定时器，以便在指定时间后重新激活。
+ * 此函数用于延长或缩短定时器的到期时间，根据当前时间加上一个特定的时间间隔重新设定。
+ * 
+ * @param timer 指向需要调整的定时器的指针。
+ */
+void WebServer::adjust_timer(util_timer* timer) {
+    // 获取当前时间
+    time_t cur = time(nullptr);
+    // 设置定时器的过期时间为当前时间加上三倍的时间槽间隔
+    timer->expire = cur + 3* TIMESLOT;
+    // 调整定时器列表中的定时器
+    utils.m_timer_lst.adjust_timer(timer);
+    // 记录调整定时器的日志
+    LOG_INFO("%s", "adjust timer once ");
+}
+
+// 处理读事件的函数
+// 参数：sockfd - 客户端socket描述符
+void WebServer::dealwithread(int sockfd) {
+    // 从用户定时器数组中获取对应的定时器
+    util_timer *timer = users_timer[sockfd].timer;
+
+    // 如果是reactor模型
+    if (1 == m_actormodel) {
+        // 如果定时器存在，则调整定时器
+        if (timer) {
+            adjust_timer(timer);
+        }
+
+        // 将读事件放入请求队列
+        m_pool->append(users + sockfd, 0);
+
+        // 循环检查是否有立即处理的请求
+        while (true) {
+            // 如果存在立即处理的请求
+            if (1 == users[sockfd].improv) {
+                // 如果设置了定时器标志位，则处理定时器
+                if (1 == users[sockfd].timer_flag) {
+                    deal_timer(timer, sockfd);
+                    users[sockfd].timer_flag = 0;
+                }
+                // 清除立即处理标志位
+                users[sockfd].improv = 0;
+                // 退出循环
+                break;
+            }
+        }
+    }
+    else {
+        // 如果是proactor模型
+        // 如果成功读取一次
+        if (users[sockfd].read_once()) {
+            // 记录日志
+            LOG_INFO("deal with the client(%s)",inet_ntoa(users[sockfd].get_address()->sin_addr));
+            // 将读事件放入请求队列
+            m_pool->append_p(users + sockfd);
+        
+
+            // 如果定时器存在，则调整定时器
+            if (timer) {
+                adjust_timer(timer);
+            }
+        
+        }
+        else {
+            // 如果读取失败，则处理定时器
+            deal_timer(timer, sockfd);
+        }
+    }
+}
+
+
+// 处理客户端的写事件
+void WebServer::dealwithwrite(int sockfd) {
+    // 获取当前客户端连接对应的定时器
+    util_timer* timer = users_timer[sockfd].timer;
+
+    // 如果是reactor模型
+    if (1 == m_actormodel) {
+        // 如果定时器存在，则调整定时器
+        if (timer) {
+            adjust_timer(timer);
+        }
+
+        // 将请求加入到线程池处理
+        m_pool->append(users + sockfd, 1);
+
+        // 循环等待直到当前连接的写事件处理完成
+        while(true) {
+            // 如果当前连接有写事件需要处理
+            if (1 == users[sockfd].improv) {
+                // 如果设置了定时器标记，则处理定时器
+                if (1 == users[sockfd].timer_flag) {
+                    deal_timer(timer, sockfd);
+                    users[sockfd].timer_flag = 0;
+                }
+                // 标记当前连接的写事件已处理
+                users[sockfd].improv = 0;
+                // 跳出循环
+                break;
+            }
+        }
+    }
+    else {
+        // 如果是proactor模型
+        // 如果写事件处理成功
+        if (users[sockfd].write()) {
+            // 记录日志，表示数据发送成功
+            LOG_INFO("send data to the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
+
+            // 如果定时器存在，则调整定时器
+            if (timer) {
+                adjust_timer(timer);
+            }
+        }
+        else {
+            // 如果写事件处理失败，则处理定时器
+            deal_timer(timer, sockfd);
+        }
+    }
+}
+
+// 为新建立连接的客户端设置定时器
+void WebServer::timer(int connfd, struct sockaddr_in client_address)
+{
+    // 初始化用户信息对象，为后续的请求处理和连接管理做准备
+    users[connfd].init(connfd, client_address, m_root, m_CONNTrigmode, m_close_log, m_user, m_passWord, m_databaseName);
+
+    // 初始化与客户端相关的定时器数据
+    users_timer[connfd].address = client_address;
+    users_timer[connfd].sockfd = connfd;
+
+    // 创建新的定时器实例，并设置定时器的回调函数、超时时间及用户数据
+    util_timer *timer = new util_timer;
+    timer->user_data = &users_timer[connfd];
+    timer->cb_func = cb_func;
+    time_t cur = time(NULL); // 获取当前时间
+    timer->expire = cur + 3 * TIMESLOT; // 设置定时器的超时时间为当前时间加上三倍的时间片间隔
+
+    // 将定时器绑定到用户会话中，并添加到全局定时器链表中
+    users_timer[connfd].timer = timer;
+    utils.m_timer_lst.add_timer(timer);
+}

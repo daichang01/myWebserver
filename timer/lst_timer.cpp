@@ -1,6 +1,34 @@
 #include "lst_timer.h"
 #include "../http/http_conn.h"
 
+/**
+ * @brief sort_timer_lst 类的构造函数
+ * 
+ * 该构造函数用于初始化 sort_timer_lst 类的成员变量 head 和 tail，
+ * 设置链表初始状态为空。
+ */
+sort_timer_lst::sort_timer_lst() {
+    head = nullptr;
+    tail = nullptr;
+}
+
+/**
+ * @brief sort_timer_lst 类的析构函数
+ * 
+ * 该析构函数用于在对象生命周期结束时释放链表中所有节点占用的内存。
+ * 它通过遍历链表，逐个删除链表中的节点，防止内存泄漏。
+ */
+sort_timer_lst::~sort_timer_lst() {
+    util_timer* tmp = head;
+    while (tmp)
+    {
+        head = tmp->next;
+        delete tmp;
+        tmp = head;
+    }
+    
+}
+
 // Utils类的信号处理函数
 void Utils::sig_handler(int sig) {
     // 为保证函数的可重入性，保留原来的errno
@@ -307,3 +335,36 @@ void Utils::timer_handler() {
     // 设置一个报警，在m_TIMESLOT时间后再次调用定时器处理函数
     alarm(m_TIMESLOT);
 }
+
+//对文件描述符设置非阻塞
+int Utils::setnonblocking(int fd) {
+    int old_option = fcntl(fd, F_GETFL);
+    int new_option = old_option | O_NONBLOCK;
+    fcntl(fd, F_SETFL, new_option);
+    return old_option;
+}
+
+/**
+ * 初始化Utils类的实例
+ * 
+ * @param timeslot 时间片的值，用于设置实例的时间片
+ */
+void Utils::init(int timeslot) {
+    m_TIMESLOT = timeslot;
+}
+
+/**
+ * @brief 向连接发送错误信息并关闭连接
+ * 
+ * 本函数用于向给定的连接描述符发送一个错误信息字符串，然后关闭该连接。
+ * 它首先使用send函数将错误信息发送给对方，然后使用close函数关闭连接。
+ * 这个函数不返回任何值。
+ * 
+ * @param connfd 连接描述符，用于标识网络连接
+ * @param info 错误信息字符串，要发送的内容
+ */
+void Utils::show_error(int connfd, const char* info) {
+    send(connfd, info, strlen(info), 0);
+    close(connfd);
+}
+
