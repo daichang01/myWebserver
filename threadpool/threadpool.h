@@ -2,6 +2,7 @@
 #define THREADPOOL_H
 #include <list>
 #include "../lock/locker.h"
+#include "../log/log.h"
 
 // 模板类threadpool用于创建和管理线程池
 // T是任务的类型，即线程池将要处理的任务的数据类型
