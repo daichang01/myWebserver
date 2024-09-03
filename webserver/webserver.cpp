@@ -185,3 +185,86 @@ void WebServer::eventListen() {
     Utils::u_pipefd = m_pipefd;
     Utils::u_epollfd = m_epollfd;
 }
+
+/**
+ * @brief 日志写入函数
+ * 
+
+ */
+void WebServer::log_write() {
+    if (0 == m_close_log) {
+        //初始化日志
+        if (1 == m_log_write) {
+            Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 800);
+        }
+        else {
+            Log::get_instance()->init("./ServerLog", m_close_log, 2000, 800000, 0);
+        }
+    }
+}
+
+/**
+ * 初始化数据库连接池和用户表
+ * 
+ * 本函数负责初始化数据库连接池和用户表，以确保Web服务器能够正常地与数据库交互
+ * 首先，它创建并配置了一个数据库连接池，然后，它初始化了一个用户表，该表将使用数据库连接池进行操作
+ * 
+ * 参数：
+ * - m_user: 数据库用户名
+ * - m_passWord: 数据库用户密码
+ * - m_databaseName: 要连接的数据库名称
+ * - m_sql_num: 数据库连接池中的初始连接数量
+ * - m_close_log: 是否关闭日志功能的标志
+ */
+void WebServer::sql_pool() {
+    // 初始化数据库连接池
+    m_connPool = connection_pool::GetInstance();
+    m_connPool->init("localhost", m_user, m_passWord, m_databaseName, 3306, m_sql_num, m_close_log);
+
+    // 初始化数据库读取表
+    users->initmysql_result(m_connPool);
+}
+
+void WebServer::thread_pool() {
+    // 线程池
+    m_pool = new threadpool<http_conn>(m_actormodel, m_connPool, m_thread_num);
+}
+
+/**
+ * 设置监听和连接的触发模式
+ * 
+ * 根据m_TRIGMode的值设置m_LISTENTrigmode和m_CONNTrigmode的值
+ * m_TRIGMode的值指定了监听和连接事件的触发模式组合
+ * m_LISTENTrigmode用于监听事件，m_CONNTrigmode用于连接事件
+ * 
+ * 0: m_LISTENTrigmode和m_CONNTrigmode都为0，表示使用LT+LT模式
+ * 1: m_LISTENTrigmode为0，m_CONNTrigmode为1，表示使用LT+ET模式
+ * 2: m_LISTENTrigmode为1，m_CONNTrigmode为0，表示使用ET+LT模式
+ * 3: m_LISTENTrigmode和m_CONNTrigmode都为1，表示使用ET+ET模式
+ */
+void WebServer::trig_mode() {
+    // LT + LT 模式
+    if (0 == m_TRIGMode)
+    {
+        m_LISTENTrigmode = 0;
+        m_CONNTrigmode = 0;
+    }
+    // LT + ET 模式
+    else if (1 == m_TRIGMode)
+    {
+        m_LISTENTrigmode = 0;
+        m_CONNTrigmode = 1;
+    }
+    // ET + LT 模式
+    else if (2 == m_TRIGMode)
+    {
+        m_LISTENTrigmode = 1;
+        m_CONNTrigmode = 0;
+    }
+    // ET + ET 模式
+    else if (3 == m_TRIGMode)
+    {
+        m_LISTENTrigmode = 1;
+        m_CONNTrigmode = 1;
+    }
+}

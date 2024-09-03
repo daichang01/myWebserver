@@ -21,6 +21,8 @@
 #include <sys/uio.h> 
 
 #include "../lock/locker.h"
+#include "../CGImysql/sql_connection_pool.h"
+#include "../log/log.h"
 
 
 // 使用标准命名空间
@@ -82,7 +84,7 @@ public:
     // 默认析构函数
     ~http_conn() {}
 
-private:
+public:
     // 初始化连接
     void init(int sockfd, const sockaddr_in &addr, char* , int , int, string user, string passwd, string sqlname);
     // 关闭连接

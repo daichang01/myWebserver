@@ -25,6 +25,41 @@ const char *error_500_form = "There was an unusual problem serving the request f
 locker m_lock;
 map<string, string> users;
 
+/**
+ * 初始化MySQL查询结果
+ * 
+ * 该函数用于从数据库中查询用户信息，并将结果存储在一个map中
+ * 使用了RAII技术管理数据库连接，确保异常情况下能正确释放资源
+ * 
+ * 参数:
+ * connPool: 数据库连接池的指针，用于获取数据库连接
+ */
+void http_conn::initmysql_result(connection_pool* connPool) {
+    // 声明MySQL连接指针，初始化为nullptr
+    MYSQL *mysql = nullptr;
+    // 使用RAII技术管理MySQL连接，确保异常安全
+    connectionRAII mysqlcon(&mysql, connPool);
+
+    // 执行SQL查询语句，选择user表中的username和passwd字段
+    // 如果查询失败，记录错误日志
+    if (mysql_query(mysql, "SELECT username, passwd from user")) {
+        LOG_ERROR("SELECT error: %s\n", mysql_error(mysql));
+    }
+
+    // 获取查询结果集
+    MYSQL_RES* result = mysql_store_result(mysql);
+    // 获取结果集的列数
+    int num_fields = mysql_num_fields(result);
+    // 获取结果集的所有字段结构数组
+    MYSQL_FIELD *field = mysql_fetch_fields(result);
+    // 遍历结果集，将每行的用户名和密码添加到users map中
+    while (MYSQL_ROW row = mysql_fetch_row(result)) {
+        string temp1(row[0]);
+        string temp2(row[1]);
+        users[temp1] = temp2;
+    }
+}
+
 
 // 初始化HTTP连接对象
 void http_conn::init() {
@@ -468,6 +503,7 @@ http_conn::HTTP_CODE http_conn::do_request() {
 
             free(m_url_real);
         }
+        //登录页面
         else if (*(p + 1) == '1')
         {
             char *m_url_real = (char *)malloc(sizeof(char) * 200);
@@ -476,6 +512,7 @@ http_conn::HTTP_CODE http_conn::do_request() {
 
             free(m_url_real);
         }
+        //图片页面
         else if (*(p + 1) == '5')
         {
             char *m_url_real = (char *)malloc(sizeof(char) * 200);
@@ -484,6 +521,7 @@ http_conn::HTTP_CODE http_conn::do_request() {
 
             free(m_url_real);
         }
+        //视频页面
         else if (*(p + 1) == '6')
         {
             char *m_url_real = (char *)malloc(sizeof(char) * 200);
@@ -492,6 +530,7 @@ http_conn::HTTP_CODE http_conn::do_request() {
 
             free(m_url_real);
         }
+        //关注页面
         else if (*(p + 1) == '7')
         {
             char *m_url_real = (char *)malloc(sizeof(char) * 200);
@@ -500,7 +539,7 @@ http_conn::HTTP_CODE http_conn::do_request() {
 
             free(m_url_real);
         }
-        // 默认情况，直接使用URL构造文件路径
+        //否则发送url实际请求的文件
         else
             strncpy(m_real_file + len, m_url, FILENAME_LEN - len - 1);
             
@@ -851,3 +890,4 @@ void http_conn::process() {
     // 调整epoll监听模式为写事件，等待数据写入
     modfd(m_epollfd, m_sockfd, EPOLLOUT, m_TRIGMode);
 }
+

@@ -4,6 +4,7 @@
 #include "../http/http_conn.h"
 #include "../threadpool/threadpool.h"
 #include "../timer/lst_timer.h"
+#include "../CGImysql/sql_connection_pool.h"
 
 #include <assert.h>
 
